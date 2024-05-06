@@ -3,3 +3,4 @@ service.key
 ca.pem
 .env
 config.yaml
+.DS_Store
