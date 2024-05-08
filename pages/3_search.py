@@ -4,6 +4,7 @@ import yaml
 from yaml.loader import SafeLoader
 import pandas as pd
 from decimal import Decimal
+import uuid
 
 import datetime
 import json
@@ -29,7 +30,6 @@ hotel_list_results = ""
 itinerary_results = ""
 
 authenticator.login()
-print(os.environ["KAFKA_URL"])
 producer = KafkaProducer(
     bootstrap_servers=os.environ["KAFKA_URL"],
     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
@@ -56,6 +56,8 @@ consumer = KafkaConsumer(
         ssl_cafile="ca.pem",    
         ssl_certfile="service.cert",
         ssl_keyfile="service.key",
+        auto_offset_reset='latest',  # Set to 'latest' to read from the latest offset
+        enable_auto_commit=False
     )
 with col1:
     with st.form("Hotel Search Form", clear_on_submit=False):
@@ -75,28 +77,41 @@ with col1:
                 "check_out_date": check_out_date_val.strftime("%Y-%m-%d"),
                 "guests": guests_val
             })
-while True:
-    for search_response in consumer.poll().values():
-        search_response = search_response[0].value.decode('utf-8')
-        search_response = json.loads(search_response, parse_float=Decimal)
-        with col2:
-            hotels = search_response["hotels"]
-            for hotel in search_response["hotels"]:
-                container = st.container(border=True)
-                container.write(f"<a href='#' id='my-link'>{hotel["Hotel"]}</a>", unsafe_allow_html=True)
-                container.write(f"${hotel["Price"]} per night")
-                container.write(f"{hotel["Room_Size"]}")
-        with col3:
-            with st.popover("Provide feedback for your itinerary"):
-                with st.form("feedback_form", clear_on_submit=False):
-                    st.write("Did you like your generated itinerary?")
-                    st.checkbox("Yes", key="Yes")
-                    st.checkbox("No", key="No")
-                    st.multiselect(
-                    "What did you like?",
-                    ["Hotel", "Restaurants", "Activities"], key="Positive")
-                    st.multiselect(
-                    "What could we have improved?",
-                    ["Hotel", "Restaurants", "Activities"], key="Negative")
-                    st.form_submit_button()
-            st.write(search_response["itinerary"])
+for search_response in consumer:
+    print(search_response)
+    search_response = search_response.value.decode('utf-8')
+    search_response = json.loads(search_response, parse_float=Decimal)
+    print(search_response)
+    with col2:
+        print("hotels", search_response["hotels"])
+        hotels = search_response["hotels"]
+        for hotel in search_response["hotels"]:
+            container = st.container(border=True)
+            container.write(f"<a href='#' id='my-link'>{hotel["Hotel"]}</a>", unsafe_allow_html=True)
+            container.write(f"${hotel["Price"]} per night")
+            container.write(f"{hotel["Room_Size"]}")
+    with col3:
+        with st.popover("Provide feedback for your itinerary"):
+            random_uuid = uuid.uuid4()
+            feedback_uuid = str(random_uuid)
+            with st.form(f"feedback_form_{feedback_uuid}", clear_on_submit=False):
+                st.write("Did you like your generated itinerary?")
+                likes_itinerary = st.checkbox(f"Yes_{feedback_uuid}", key=f"Yes_{feedback_uuid}")
+                dislikes_itinerary = st.checkbox(f"No_{feedback_uuid}", key=f"No_{feedback_uuid}")
+                feedback_likes = st.multiselect(
+                "What did you like?",
+                ["Hotel", "Restaurants", "Activities"], key=f"Positive_{feedback_uuid}")
+                feedback_dislikes = st.multiselect(
+                f"What could we have improved?_{feedback_uuid}",
+                ["Hotel", "Restaurants", "Activities"], key=f"Negative_{feedback_uuid}")
+                feedback_submitted = st.form_submit_button()
+                if feedback_submitted:
+                    send_clickstream_data({
+                        "likes_itinerary": likes_itinerary,
+                        "dislikes_itinerary": dislikes_itinerary,
+                        "feedback_likes": feedback_likes,
+                        "feedback_dislikes": feedback_dislikes
+                    })
+        st.write(search_response["itinerary"])
+    consumer.commit()
+    break
