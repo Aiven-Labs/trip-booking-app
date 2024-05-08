@@ -1,12 +1,11 @@
 from kafka import KafkaConsumer, KafkaProducer
 import json
 import datetime
-from langchain_google_vertexai import VertexAI
+from langchain_openai import OpenAI
 import psycopg2
 import os
 from dotenv import load_dotenv
 load_dotenv()
-
 conn = psycopg2.connect(
     user=os.environ["POSTGRES_USER"],
     password=os.environ["POSTGRES_PASSWORD"],
@@ -87,7 +86,7 @@ def retrieve_hotels(location):
     return response
 
 def request_itinerary(request_payload):
-    model = VertexAI(model_name="gemini-pro")
+    model = OpenAI()
     print("REQUEST", request_payload["trip_type"])
     response = model.invoke(f"""You are a travel agent. DO NOT include the customer profile in your output. 
                             Based on the trip_type information, this is a {request_payload["trip_type"]} trip.

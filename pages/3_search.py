@@ -29,6 +29,7 @@ hotel_list_results = ""
 itinerary_results = ""
 
 authenticator.login()
+print(os.environ["KAFKA_URL"])
 producer = KafkaProducer(
     bootstrap_servers=os.environ["KAFKA_URL"],
     security_protocol="SSL",
@@ -78,7 +79,7 @@ with col1:
                 while True:
                     for search_response in consumer.poll().values():
                         search_response = search_response[0].value.decode('utf-8')
-                        print(search_response)
+                        print("Search_response", search_response)
                         with col2:
                             search_response = eval(search_response)
                             for hotel in search_response["hotels"]:
