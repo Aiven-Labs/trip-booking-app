@@ -22,6 +22,7 @@ clickstream_history = {}
 
 producer = KafkaProducer(
     bootstrap_servers=os.environ["KAFKA_URL"],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8'),
     security_protocol="SSL",
     ssl_cafile="ca.pem",
     ssl_certfile="service.cert",
@@ -33,7 +34,7 @@ def search_response(hotels, itinerary):
         "hotels": hotels,
         "itinerary": itinerary
     }
-    producer.send(SEARCH_RESPONSES_TOPIC, str(response).encode('utf-8'))
+    producer.send(SEARCH_RESPONSES_TOPIC, response)
 
 def retrieve_clickstream_data(customer_id):
     customer_id = str(customer_id)
@@ -79,7 +80,7 @@ def retrieve_hotels(location):
         response.append({
             "Location": row[0],
             "Hotel": row[1],
-            "Price": row[2],
+            "Price": str(row[2]),
             "Room_Size": row[3]
         })
     print(results)
@@ -142,8 +143,10 @@ def add_to_clickstream_history(clickstream_event):
 
 while True:
     for message in consumer.poll().values():
-        print(message)
+        print("Message", message)
         if message[0].topic == "user_activity":
             add_to_clickstream_history(message[0].value.decode('utf-8'))
         else:
+            print(message)
+            print(message[0].value.decode('utf-8'))
             process_search_request(message[0].value.decode('utf-8'))
