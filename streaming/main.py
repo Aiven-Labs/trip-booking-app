@@ -1,4 +1,5 @@
 import argparse
+import requests # type: ignore
 import sys
 
 from pyflink.common.typeinfo import Types # type: ignore
@@ -11,6 +12,8 @@ from pyflink.datastream.formats.json import JsonRowDeserializationSchema, JsonRo
 from pyflink.datastream.functions import KeyedCoProcessFunction, MapFunction, RuntimeContext # type: ignore
 from pyflink.datastream.state import ListStateDescriptor, ValueStateDescriptor # type: ignore
 from pyflink.table import StreamTableEnvironment # type: ignore
+
+api_url = "https://api.openai.com/v1/chat/completions"
 
 type_info_hotel = (
     Types
@@ -25,6 +28,20 @@ type_info_hotel = (
                 Types.STRING(),
                 Types.STRING(),
                 Types.STRING(),
+                Types.STRING()
+            ]
+        )
+)
+
+type_info_user_activity = (
+    Types
+        .ROW_NAMED(
+            [
+                "customer_id",
+                "hotel_viewed"
+            ],
+            [
+                Types.INT(),
                 Types.STRING()
             ]
         )
@@ -46,20 +63,6 @@ type_info_search_request = (
                 Types.STRING(),
                 Types.SQL_DATE(),
                 Types.SQL_DATE()
-            ]
-        )
-)
-
-type_info_user_activity = (
-    Types
-        .ROW_NAMED(
-            [
-                "customer_id",
-                "hotel_viewed"
-            ],
-            [
-                Types.INT(),
-                Types.STRING()
             ]
         )
 )
@@ -187,10 +190,33 @@ serialization_schema_hotels_itinerary = (
 
 class HotelsItinerary(MapFunction):
 
+    def __init__(self, known_args):
+        self.open_api_key = known_args.open_api_key
+
     def map(self, search_request_user_activity_hotels):
+        payload = {
+            "model": "gpt-3.5-turbo",
+            "temperature": 0.7,
+            "messages": [{
+                "role": "user",
+                "content": f"""You are a travel agent. DO NOT include the customer profile in your output. 
+                            Based on the trip_type information, this is a {search_request_user_activity_hotels.search_request_user_activity.trip_type} trip.
+                            DO NOT make any mentions of the customer's identity in your itinerary.
+                            YOU SHOULD suggest this hotel: {search_request_user_activity_hotels.search_request_user_activity.session_data}, because the customer is interested in those hotels.
+                            If it is a business trip, you SHOULD ONLY suggest activities during the evenings, not during the MORNING OR AFTERNOON. 
+                            IF IT IS A FUN TRIP, DO NOT SUGGEST ACTIVITIES DURING THE MORNING OR AFTERNOON IF IT IS A BUSINESS TRIP. THE USER WILL BE AT WORK.
+                            Make a trip itinerary based on the following parameters.{search_request_user_activity_hotels.search_request_user_activity.as_dict(recursive=True)} 
+                            You should emphasize trip activities based on the customer\'s preferred activities.
+                            """
+            }]
+        }
+        headers =  {
+            "Authorization": f"Bearer {self.open_api_key}"
+        }
+        response = requests.post(api_url, json=payload, headers=headers)
         return Row(
             hotels=search_request_user_activity_hotels.hotels,
-            itinerary=" Trip Itinerary for Business Trip to Austin, Texas: Day 1: - Check in at the suggested hotel: [insert hotel name here] in Austin, Texas - Evening activity: Attend a sports competition (based on customer's preferred activity) at [insert sports venue here] - Dinner at a popular local restaurant Day 2: - Morning: Free time or work-related meetings - Afternoon: Free time or work-related meetings - Evening activity: Relax at the hotel pool (based on customer's preferred perk) Day 3: - Morning: Free time or work-related meetings - Afternoon: Free time or work-related meetings - Evening activity: Enjoy a workout at the hotel gym (based on customer's preferred perk) Day 4: - Morning: Free time or work-related meetings - Afternoon: Free time or work-related meetings - Evening activity: Visit a local brewery or winery for a networking event Day 5: - Check out of the hotel - Free time or work-related meetings until departure "
+            itinerary=response.json()["choices"][0]["message"]["content"]
         )
 
 class SearchRequestUserActivityHotels(KeyedCoProcessFunction):
@@ -267,25 +293,46 @@ def get_trip_type(guest_count):
         return "FUN"
 
 def get_customer_profile(customer_id):
-    return (
-        Row(
-            customer_id=customer_id,
-            customer_age=40,
-            customer_gender="Male",
-            customer_home="NY",
-            customer_hotel_loyalty="Marriott",
-            customer_flight_loyalty="Delta"
+    if customer_id == "1":
+        return (
+            Row(
+                customer_id=customer_id,
+                customer_age=40,
+                customer_gender="Male",
+                customer_home="NY",
+                customer_hotel_loyalty="Marriott",
+                customer_flight_loyalty="Delta"
+            )
         )
-    )
+    elif customer_id == "2":
+        return (
+            Row(
+                customer_id=customer_id,
+                customer_age=21,
+                customer_gender="Female",
+                customer_home="LA",
+                customer_hotel_loyalty="Hilton",
+                customer_flight_loyalty="United"
+            )
+        )
 
 def get_customer_history(customer_id):
-    return (
-        Row(
-            preferred_travel_type="business travel",
-            preferred_activities="Sports competitions",
-            preferred_perks="Pools, Gyms"
+    if customer_id == "1":
+        return (
+            Row(
+                preferred_travel_type="Business Travel",
+                preferred_activities="Sports Competitions",
+                preferred_perks="Pools, Gyms"
+            )
         )
-    )
+    elif customer_id == "2":
+        return (
+            Row(
+                preferred_travel_type="Leisure Travel",
+                preferred_activities="Music Concerts",
+                preferred_perks="Music Venues, Concert Halls"
+            )
+        )
 
 def main(known_args):
     # Gets execution environment
@@ -364,7 +411,7 @@ def pipeline(stream_execution_environment, stream_table_environment, known_args)
     )
     (
         search_request_user_activity_hotels
-            .map(HotelsItinerary(), output_type=type_info_hotels_itinerary)
+            .map(HotelsItinerary(known_args=known_args), output_type=type_info_hotels_itinerary)
             .sink_to(
                 KafkaSink
                     .builder()
@@ -447,6 +494,16 @@ def get_source_kafka(known_args, topic_name, deserialization_schema):
     )
 
 def add_arguments(parser):
+    # Adds open api key
+    (
+        parser
+            .add_argument(
+                "--open-api-key",
+                dest="open_api_key",
+                required=True,
+                help="Open API Key."
+            )
+    )
     # Adds service uri
     (
         parser
