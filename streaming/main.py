@@ -3,14 +3,14 @@ import requests # type: ignore
 import sys
 
 from pyflink.common.typeinfo import Types # type: ignore
-from pyflink.common.types import Row # type: ignore
+from pyflink.common.types import Row, RowKind # type: ignore
 from pyflink.common.watermark_strategy import WatermarkStrategy  # type: ignore
 from pyflink.datastream import StreamExecutionEnvironment, RuntimeExecutionMode # type: ignore
 from pyflink.datastream.connectors import DeliveryGuarantee # type: ignore
 from pyflink.datastream.connectors.kafka import KafkaSink, KafkaSource, KafkaOffsetsInitializer, KafkaRecordSerializationSchema # type: ignore
 from pyflink.datastream.formats.json import JsonRowDeserializationSchema, JsonRowSerializationSchema # type: ignore
-from pyflink.datastream.functions import KeyedCoProcessFunction, MapFunction, RuntimeContext # type: ignore
-from pyflink.datastream.state import ListStateDescriptor, ValueStateDescriptor # type: ignore
+from pyflink.datastream.functions import FilterFunction, KeyedCoProcessFunction, MapFunction, RuntimeContext # type: ignore
+from pyflink.datastream.state import MapStateDescriptor, ValueStateDescriptor # type: ignore
 from pyflink.table import StreamTableEnvironment # type: ignore
 
 api_url = "https://api.openai.com/v1/chat/completions"
@@ -188,6 +188,11 @@ serialization_schema_hotels_itinerary = (
         .build()
 )
 
+class IsNotUpdateBefore(FilterFunction):
+
+    def filter(self, value):
+        return value.get_row_kind() is not RowKind.UPDATE_BEFORE
+
 class HotelsItinerary(MapFunction):
 
     def __init__(self, known_args):
@@ -206,7 +211,7 @@ class HotelsItinerary(MapFunction):
                             If it is a business trip, you SHOULD ONLY suggest activities during the evenings, not during the MORNING OR AFTERNOON. 
                             IF IT IS A FUN TRIP, DO NOT SUGGEST ACTIVITIES DURING THE MORNING OR AFTERNOON IF IT IS A BUSINESS TRIP. THE USER WILL BE AT WORK.
                             Make a trip itinerary based on the following parameters.{search_request_user_activity_hotels.search_request_user_activity.as_dict(recursive=True)} 
-                            You should emphasize trip activities based on the customer\'s preferred activities.
+                            You should emphasize trip activities based on the customer\'s preferred activities. Give SPECIFIC recommendations for activities based on real things to do in that city.
                             """
             }]
         }
@@ -227,9 +232,10 @@ class SearchRequestUserActivityHotels(KeyedCoProcessFunction):
     def open(self, runtime_context: RuntimeContext):
         self.state = (
             runtime_context
-                .get_list_state(
-                    ListStateDescriptor(
+                .get_map_state(
+                    MapStateDescriptor(
                         "hotels",
+                        Types.STRING(),
                         type_info_hotel
                     )
                 )
@@ -237,7 +243,7 @@ class SearchRequestUserActivityHotels(KeyedCoProcessFunction):
 
     def process_element1(self, search_request_user_activity, ctx: 'KeyedCoProcessFunction.Context'):
         # retrieve the current count
-        state_values = self.state.get()
+        state_values = self.state.values()
         hotels = []
         for hotel in state_values:
             hotels.append({
@@ -253,7 +259,12 @@ class SearchRequestUserActivityHotels(KeyedCoProcessFunction):
 
     def process_element2(self, hotel, ctx: 'KeyedCoProcessFunction.Context'):
         # write the state
-        self.state.add(hotel)
+        if (hotel.get_row_kind() is RowKind.INSERT):
+            self.state.put(hotel.hotel, hotel)
+        elif (hotel.get_row_kind() is RowKind.UPDATE_AFTER):
+            self.state.put(hotel.hotel, hotel)
+        elif (hotel.get_row_kind() is RowKind.DELETE):
+            self.state.remove(hotel.hotel)
 
 class SearchRequestUserActivity(KeyedCoProcessFunction):
 
@@ -341,11 +352,9 @@ def main(known_args):
     stream_execution_environment.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     # Sets parallelism
     stream_execution_environment.set_parallelism(1)
-    # Specify python requirements
     # Registers connectors
     stream_execution_environment.add_jars("file:///flink/usrlib/flink-sql-connector-kafka-1.17.2.jar")
-    stream_execution_environment.add_jars("file:///flink/usrlib/flink-connector-jdbc-3.1.2-1.17.jar")
-    stream_execution_environment.add_jars("file:///flink/usrlib/postgresql-42.7.3.jar")
+    stream_execution_environment.add_jars("file:///flink/usrlib/flink-sql-connector-postgres-cdc-3.0.1.jar")
     # Gets table environment
     stream_table_environment = StreamTableEnvironment.create(stream_execution_environment)
     # Defines pipeline
@@ -371,7 +380,7 @@ def pipeline(stream_execution_environment, stream_table_environment, known_args)
     # Adds source, transformation, sink
     hotels = (
         stream_table_environment
-            .to_data_stream(
+            .to_changelog_stream(
                 stream_table_environment
                     .sql_query(
                         """
@@ -380,6 +389,7 @@ def pipeline(stream_execution_environment, stream_table_environment, known_args)
                         """
                     )
             )
+            .filter(IsNotUpdateBefore())
     )
     search_requests = (
         get_datastream_from_kafka(
@@ -459,16 +469,23 @@ def get_source_postgres(known_args, table_name):
             room_size VARCHAR,
             price DECIMAL
         ) WITH (
-          'connector' = 'jdbc',
-          'url' = '{service_uri}',
-          'username' = '{username}',
-          'password' = '{password}',
-          'table-name' = '{table_name}'
+        'connector' = 'postgres-cdc',
+        'hostname' = '{hostname}',
+        'port' = '{port}',
+        'username' = '{username}',
+        'password' = '{password}',
+        'database-name' = '{database_name}',
+        'schema-name' = 'public',
+        'table-name' = '{table_name}',
+        'slot.name' = 'flink',
+        'decoding.plugin.name' = 'pgoutput'
         )
         """.format(
-            service_uri=known_args.service_uri,
+            hostname=known_args.hostname,
+            port=known_args.port,
             username=known_args.username,
             password=known_args.password,
+            database_name=known_args.database_name,
             table_name=table_name
         )
     )
@@ -504,14 +521,34 @@ def add_arguments(parser):
                 help="Open API Key."
             )
     )
-    # Adds service uri
+    # Adds hostname
     (
         parser
             .add_argument(
-                "--service-uri",
-                dest="service_uri",
+                "--hostname",
+                dest="hostname",
                 required=True,
-                help="Postgres Service URI."
+                help="Postgres Hostname."
+            )
+    )
+    # Adds port
+    (
+        parser
+            .add_argument(
+                "--port",
+                dest="port",
+                required=True,
+                help="Postgres Port."
+            )
+    )
+    # Adds database name
+    (
+        parser
+            .add_argument(
+                "--database-name",
+                dest="database_name",
+                required=True,
+                help="Postgres Database Name."
             )
     )
     # Adds username

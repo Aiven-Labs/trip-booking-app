@@ -284,10 +284,10 @@ if __name__ == "__main__":
                     .set_bootstrap_servers(known_args.bootstrap_servers)
                     .set_record_serializer(
                         KafkaRecordSerializationSchema
-                        .builder()
-                        .set_topic("search_responses_test")
-                        .set_value_serialization_schema(serialization_schema_hotels_itinerary)
-                        .build()
+                            .builder()
+                            .set_topic("search_responses_test")
+                            .set_value_serialization_schema(serialization_schema_hotels_itinerary)
+                            .build()
                     )
                     .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE)
                     .set_property("security.protocol", "SSL")
