@@ -1,7 +1,7 @@
 # trip-booking-app
 Trip Booking App, demo with Aiven Kafka
 
-Through Aiven Kafka and Ververica Flink, we can personalize the Priceline customer’s user experience with target suggestions based on browsing history, length of stay, and determining if the trip is potentially a family holiday or a business event.
+Through Aiven Kafka and Ververica Flink, we can personalize the customer’s user experience with target suggestions based on browsing history, length of stay, and determining if the trip is potentially a family holiday or a business event.
 
 DEMO ACTIONS:
 
