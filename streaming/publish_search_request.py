@@ -94,8 +94,8 @@ if __name__ == "__main__":
                         guests=1,
                         customer_id="1",
                         location="Austin, Texas",
-                        check_in_date=datetime.date(2024, 7, 6),
-                        check_out_date=datetime.date(2024, 7, 10)
+                        check_in_date=datetime.date(2024, 9, 6),
+                        check_out_date=datetime.date(2024, 9, 10)
                     )
                 ],
                 type_info=type_info_search_request
@@ -107,7 +107,7 @@ if __name__ == "__main__":
                     .set_record_serializer(
                         KafkaRecordSerializationSchema
                             .builder()
-                            .set_topic("search_requests_test")
+                            .set_topic("search_requests")
                             .set_value_serialization_schema(serialization_schema_search_request)
                             .build()
                     )

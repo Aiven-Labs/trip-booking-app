@@ -9,7 +9,7 @@ from pyflink.datastream import StreamExecutionEnvironment, RuntimeExecutionMode 
 from pyflink.datastream.connectors import DeliveryGuarantee # type: ignore
 from pyflink.datastream.connectors.kafka import KafkaSink, KafkaSource, KafkaOffsetsInitializer, KafkaRecordSerializationSchema # type: ignore
 from pyflink.datastream.formats.json import JsonRowDeserializationSchema, JsonRowSerializationSchema # type: ignore
-from pyflink.datastream.functions import FilterFunction, KeyedCoProcessFunction, MapFunction, RuntimeContext # type: ignore
+from pyflink.datastream.functions import KeyedCoProcessFunction, MapFunction, RuntimeContext # type: ignore
 from pyflink.datastream.state import MapStateDescriptor, ValueStateDescriptor # type: ignore
 from pyflink.table import StreamTableEnvironment # type: ignore
 
@@ -188,11 +188,6 @@ serialization_schema_hotels_itinerary = (
         .build()
 )
 
-class IsNotUpdateBefore(FilterFunction):
-
-    def filter(self, value):
-        return value.get_row_kind() is not RowKind.UPDATE_BEFORE
-
 class HotelsItinerary(MapFunction):
 
     def __init__(self, known_args):
@@ -263,6 +258,8 @@ class SearchRequestUserActivityHotels(KeyedCoProcessFunction):
             self.state.put(hotel.hotel, hotel)
         elif (hotel.get_row_kind() is RowKind.UPDATE_AFTER):
             self.state.put(hotel.hotel, hotel)
+        elif (hotel.get_row_kind() is RowKind.UPDATE_BEFORE):
+            self.state.remove(hotel.hotel)
         elif (hotel.get_row_kind() is RowKind.DELETE):
             self.state.remove(hotel.hotel)
 
@@ -389,7 +386,6 @@ def pipeline(stream_execution_environment, stream_table_environment, known_args)
                         """
                     )
             )
-            .filter(IsNotUpdateBefore())
     )
     search_requests = (
         get_datastream_from_kafka(

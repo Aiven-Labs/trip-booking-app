@@ -97,7 +97,7 @@ if __name__ == "__main__":
                     .set_record_serializer(
                         KafkaRecordSerializationSchema
                             .builder()
-                            .set_topic("user_activity_test")
+                            .set_topic("user_activity")
                             .set_value_serialization_schema(serialization_schema_user_activity)
                             .build()
                     )
